@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1775747100000,
+      "tag": "0000_volatile_groot",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1778117932275,
+      "tag": "0001_ambiguous_meltdown",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1778247978881,
+      "tag": "0002_numerous_true_believers",
+      "breakpoints": true
+    }
+  ]
+}

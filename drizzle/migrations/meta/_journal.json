@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1791976735257,
+      "tag": "0000_0000_clean_baseline",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1791988935993,
+      "tag": "0001_add_unique_otp_constraints",
+      "breakpoints": true
+    }
+  ]
+}

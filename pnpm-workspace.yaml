@@ -1,0 +1,13 @@
+packages:
+  - .
+
+# pnpm 10 requires an explicit allow-list for dependency lifecycle scripts.
+onlyBuiltDependencies:
+  - '@tailwindcss/oxide'
+  - esbuild
+
+overrides:
+  'tailwindcss>nanoid': '3.3.7'
+
+patchedDependencies:
+  'wouter@3.7.1': patches/wouter@3.7.1.patch
