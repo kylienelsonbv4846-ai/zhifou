@@ -40,6 +40,9 @@ export default function ResetPassword() {
     onError: (error) => {
       toast.error(error.message || "重置失败，请重试");
     },
+    onSettled: () => {
+      setIsLoading(false);
+    },
   });
 
   const validateForm = (): boolean => {
@@ -60,7 +63,7 @@ export default function ResetPassword() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
@@ -73,15 +76,11 @@ export default function ResetPassword() {
     }
 
     setIsLoading(true);
-    try {
-      await resetMutation.mutateAsync({
-        token,
-        password: formData.password,
-        confirmPassword: formData.confirmPassword,
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    resetMutation.mutate({
+      token,
+      password: formData.password,
+      confirmPassword: formData.confirmPassword,
+    });
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {

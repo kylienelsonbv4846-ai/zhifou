@@ -5,6 +5,7 @@ import { Download, BookOpen, Users } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { toast } from "sonner";
 
 export default function Home() {
   const { user, loading, isAuthenticated } = useAuth();
@@ -24,10 +25,15 @@ export default function Home() {
       // 刷新页面以重新加载认证状态
       window.location.href = "/";
     },
+    onError: (error) => {
+      toast.error("登出失败，请重试", {
+        description: error.message || undefined,
+      });
+    },
   });
 
-  const handleLogout = async () => {
-    await logoutMutation.mutateAsync();
+  const handleLogout = () => {
+    logoutMutation.mutate();
   };
 
   if (loading) {
@@ -56,6 +62,7 @@ export default function Home() {
               <Button
                 variant="outline"
                 onClick={handleLogout}
+                disabled={logoutMutation.isPending}
               >
                 登出
               </Button>

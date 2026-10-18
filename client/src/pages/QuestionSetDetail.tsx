@@ -9,12 +9,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { trpc } from "@/lib/trpc";
+import { shouldLogMutationErrorCode } from "@/lib/apiMutationErrorPolicy";
+import { TRPCClientError } from "@trpc/client";
 import { ArrowLeft, Plus, Trash2, Edit, HelpCircle, Upload, X } from "lucide-react";
 import { useState } from "react";
 import { useRoute, useLocation } from "wouter";
 import { toast } from "sonner";
 
 type QuestionType = "multiple_choice" | "single_choice" | "true_false";
+
+function logUnexpectedUploadError(error: unknown) {
+  const errorCode =
+    error instanceof TRPCClientError ? error.data?.code : undefined;
+
+  if (shouldLogMutationErrorCode(errorCode)) {
+    console.error("Upload error:", error);
+  }
+}
 
 export default function QuestionSetDetail() {
   const [, params] = useRoute("/question-sets/:id");
@@ -125,7 +136,7 @@ export default function QuestionSetDetail() {
 
   const uploadMutation = trpc.upload.image.useMutation();
 
-  const handleMediaUpload = async (file: File, isQuestionMedia: boolean, optionKey?: string) => {
+  const handleMediaUpload = (file: File, isQuestionMedia: boolean, optionKey?: string) => {
     const supportedTypes = [
       "image/avif", "image/gif", "image/jpeg", "image/png", "image/webp",
       "video/mp4", "video/webm", "video/quicktime", "video/x-m4v",
@@ -137,29 +148,49 @@ export default function QuestionSetDetail() {
     try {
       // Convert file to base64
       const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = (reader.result as string).split(',')[1]; // Remove data:image/xxx;base64, prefix
-        
+      reader.onload = () => {
         try {
-          const result = await uploadMutation.mutateAsync({
+          const fileData = reader.result;
+          if (typeof fileData !== "string") {
+            toast.error("文件读取失败");
+            return;
+          }
+
+          const separatorIndex = fileData.indexOf(",");
+          const base64 = fileData.slice(separatorIndex + 1);
+          if (separatorIndex === -1 || !base64) {
+            toast.error("文件读取失败");
+            return;
+          }
+
+          uploadMutation
+            .mutateAsync({
             fileName: file.name,
             fileData: base64,
             contentType: file.type as (typeof supportedTypes)[number],
-          });
-          
-          if (isQuestionMedia) {
-            setQuestionMediaUrl(result.url);
-          } else if (optionKey) {
-            setOptionMediaUrls((prev) => ({ ...prev, [optionKey]: result.url }));
-          }
-          toast.success("图片上传成功");
+            })
+            .then(result => {
+              if (isQuestionMedia) {
+                setQuestionMediaUrl(result.url);
+              } else if (optionKey) {
+                setOptionMediaUrls((prev) => ({ ...prev, [optionKey]: result.url }));
+              }
+              toast.success("图片上传成功");
+            })
+            .catch(error => {
+              logUnexpectedUploadError(error);
+              toast.error("图片上传失败");
+            });
         } catch (error) {
-          console.error('Upload error:', error);
+          logUnexpectedUploadError(error);
           toast.error("图片上传失败");
         }
       };
       reader.onerror = () => {
         toast.error("文件读取失败");
+      };
+      reader.onabort = () => {
+        toast.error("文件读取已取消");
       };
       reader.readAsDataURL(file);
     } catch (error) {

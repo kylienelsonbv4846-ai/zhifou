@@ -119,23 +119,18 @@ describe("Students Bulk Import", () => {
     const classId = classResult.classId;
     createdClassIds.push(classId);
 
-    try {
-      await caller.students.bulkImport({
+    await expect(
+      caller.students.bulkImport({
         classId,
         students: [
           { name: "\u5f20\u4e09", cardNumber: 5 },
           { name: "\u674e\u56db", cardNumber: 5 }, // Duplicate
         ],
-      });
-      expect.fail("Should have thrown an error");
-    } catch (error) {
-      const errorMessage = (error as Error).message;
-      const isValidError = errorMessage.includes("already in use") || 
-                          errorMessage.includes("Card number") ||
-                          errorMessage.includes("duplicate") ||
-                          errorMessage.includes("Duplicate");
-      expect(isValidError).toBe(true);
-    }
+      })
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "该班级已使用此答题卡号",
+    });
   });
 
   it("should reject invalid card numbers", async () => {

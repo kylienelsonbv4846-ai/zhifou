@@ -57,6 +57,9 @@ export default function UserProfile() {
         icon: <AlertCircle className="w-4 h-4" />,
       });
     },
+    onSettled: () => {
+      setIsLoading(false);
+    },
   });
 
   // 微信绑定
@@ -229,7 +232,7 @@ export default function UserProfile() {
     reader.readAsDataURL(file);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
@@ -237,13 +240,9 @@ export default function UserProfile() {
     }
 
     setIsLoading(true);
-    try {
-      await updateProfileMutation.mutateAsync({
-        name: formData.name.trim(),
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    updateProfileMutation.mutate({
+      name: formData.name.trim(),
+    });
   };
 
   // 微信处理函数
@@ -259,17 +258,13 @@ export default function UserProfile() {
       await bindWeChatMutation.mutateAsync({
         wechatId: wechatBindingCode.trim(),
       });
-    } catch (error) {
-      console.error("Bind WeChat error:", error);
-    }
+    } catch {}
   };
 
   const handleUnbindWeChat = async () => {
     try {
       await unbindWeChatMutation.mutateAsync();
-    } catch (error) {
-      console.error("Unbind WeChat error:", error);
-    }
+    } catch {}
   };
 
   // QQ处理函数
@@ -285,17 +280,13 @@ export default function UserProfile() {
       await bindQQMutation.mutateAsync({
         qqId: qqBindingCode.trim(),
       });
-    } catch (error) {
-      console.error("Bind QQ error:", error);
-    }
+    } catch {}
   };
 
   const handleUnbindQQ = async () => {
     try {
       await unbindQQMutation.mutateAsync();
-    } catch (error) {
-      console.error("Unbind QQ error:", error);
-    }
+    } catch {}
   };
 
   // 抖音处理函数
@@ -311,17 +302,13 @@ export default function UserProfile() {
       await bindDouyinMutation.mutateAsync({
         douyinId: douyinBindingCode.trim(),
       });
-    } catch (error) {
-      console.error("Bind Douyin error:", error);
-    }
+    } catch {}
   };
 
   const handleUnbindDouyin = async () => {
     try {
       await unbindDouyinMutation.mutateAsync();
-    } catch (error) {
-      console.error("Unbind Douyin error:", error);
-    }
+    } catch {}
   };
 
   if (isLoadingUser) {

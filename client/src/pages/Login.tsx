@@ -57,6 +57,9 @@ export default function Login() {
       setLoginError(errorMessage);
       toast.error(errorMessage);
     },
+    onSettled: () => {
+      setIsLoading(false);
+    },
   });
 
   const validateForm = (): boolean => {
@@ -76,7 +79,7 @@ export default function Login() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
@@ -92,14 +95,10 @@ export default function Login() {
     }
 
     setIsLoading(true);
-    try {
-      await loginMutation.mutateAsync({
-        email: formData.email.toLowerCase().trim(),
-        password: formData.password,
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    loginMutation.mutate({
+      email: formData.email.toLowerCase().trim(),
+      password: formData.password,
+    });
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {

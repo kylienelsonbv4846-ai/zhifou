@@ -56,13 +56,13 @@ export default function StudentAnswer() {
     setFeedback(data.submittedAnswer ? '答案已提交，请等待老师公布结果。' : null);
   }, [sessionQuery.data?.question.id, sessionQuery.data?.submittedAnswer]);
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     const question = sessionQuery.data?.question;
     if (!question || !selectedAnswer || submitted) {
       if (!selectedAnswer) toast.error('请至少选择一个选项');
       return;
     }
-    await submitMutation.mutateAsync({
+    submitMutation.mutate({
       sessionId: sessionNumber,
       studentId: studentNumber,
       questionId: question.id,

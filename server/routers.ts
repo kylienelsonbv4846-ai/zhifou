@@ -51,6 +51,42 @@ async function trySendEmail(
   }
 }
 
+function logUnexpectedTrpcError(
+  context: string,
+  error: unknown,
+  expectedCodes: readonly string[] = []
+) {
+  if (error instanceof TRPCError && expectedCodes.includes(error.code)) return;
+  console.error(context, error);
+}
+
+async function withStudentCardNumberErrors<T>(
+  context: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof db.StudentCardNumberCapacityError) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "该班级的40个答题卡号已全部分配",
+      });
+    }
+    if (
+      error instanceof db.StudentCardNumberConflictError ||
+      db.isDuplicateDatabaseEntry(error)
+    ) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "该班级已使用此答题卡号",
+      });
+    }
+    logUnexpectedTrpcError(context, error, ["CONFLICT", "NOT_FOUND", "PRECONDITION_FAILED"]);
+    throw error;
+  }
+}
+
 function inaccessible(): TRPCError {
   return new TRPCError({ code: "NOT_FOUND", message: "资源不存在或无权访问" });
 }
@@ -174,7 +210,7 @@ export const appRouter = router({
 
           const now = new Date();
           if (!(await db.claimEmailSendingRateLimit(0, input.email, now, EMAIL_RESEND_RATE_LIMIT_MINUTES))) {
-            throw new Error("请稍后再试");
+            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "请稍后再试" });
           }
 
           // 临时记录只保存 bcrypt 哈希，浏览器不会持久化明文密码。
@@ -224,9 +260,7 @@ export const appRouter = router({
             email: input.email,
           };
         } catch (error) {
-          if (!(error instanceof TRPCError && error.code === "CONFLICT")) {
-            console.error("[Auth] Registration error:", error);
-          }
+          logUnexpectedTrpcError("[Auth] Registration error:", error, ["CONFLICT", "TOO_MANY_REQUESTS"]);
           throw error;
         }
       }),
@@ -252,7 +286,10 @@ export const appRouter = router({
           }
           
           // Local email accounts use first-party JWT sessions.
-          const sessionToken = await sdk.createLocalSessionToken(user.id);
+          const sessionToken = await sdk.createLocalSessionToken(
+            user.id,
+            user.sessionVersion
+          );
           
           // 设置会话Cookie
           const cookieOptions = getSessionCookieOptions(ctx.req);
@@ -345,12 +382,7 @@ export const appRouter = router({
             user: verifiedUser,
           };
         } catch (error) {
-          const isExpectedVerificationError =
-            error instanceof TRPCError &&
-            (error.code === "BAD_REQUEST" || error.code === "TOO_MANY_REQUESTS");
-          if (!isExpectedVerificationError) {
-            console.error("[Auth] Email verification error:", error);
-          }
+          logUnexpectedTrpcError("[Auth] Email verification error:", error, ["BAD_REQUEST", "TOO_MANY_REQUESTS"]);
           throw error;
         }
       }),
@@ -359,15 +391,15 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         try {
           const tokenRecord = await db.getEmailVerificationTokenByToken(input.token);
-          if (!tokenRecord) throw new Error("验证链接无效或已使用");
+          if (!tokenRecord) throw new TRPCError({ code: "BAD_REQUEST", message: "验证链接无效或已使用" });
           if (isTokenExpired(tokenRecord.expiresAt)) {
             await db.deleteEmailVerificationToken(input.token);
-            throw new Error("验证链接已过期，请重新发送验证邮件");
+            throw new TRPCError({ code: "BAD_REQUEST", message: "验证链接已过期，请重新发送验证邮件" });
           }
 
           const user = await db.getUserByEmail(tokenRecord.email);
           if (!user || user.id !== tokenRecord.userId || user.loginMethod !== "local") {
-            throw new Error("验证链接无效或已使用");
+            throw new TRPCError({ code: "BAD_REQUEST", message: "验证链接无效或已使用" });
           }
 
           if (!user.isEmailVerified) await db.markEmailAsVerified(user.id);
@@ -380,7 +412,7 @@ export const appRouter = router({
             user: { id: user.id, email: user.email, name: user.name },
           };
         } catch (error) {
-          console.error("[Auth] Legacy email token verification error:", error);
+          logUnexpectedTrpcError("[Auth] Legacy email token verification error:", error, ["BAD_REQUEST"]);
           throw error;
         }
       }),
@@ -577,16 +609,16 @@ ClassClicker 团队
         try {
           const tokenRecord = await db.getPasswordResetTokenByToken(input.token);
           if (!tokenRecord) {
-            throw new Error("重置令牌无效或已过期");
+            throw new TRPCError({ code: "BAD_REQUEST", message: "重置令牌无效或已过期" });
           }
           
           if (isTokenExpired(tokenRecord.expiresAt)) {
             await db.deletePasswordResetToken(input.token);
-            throw new Error("重置令牌已过期，请重新申请");
+            throw new TRPCError({ code: "BAD_REQUEST", message: "重置令牌已过期，请重新申请" });
           }
           
           if (tokenRecord.usedAt) {
-            throw new Error("此重置令牌已被使用");
+            throw new TRPCError({ code: "BAD_REQUEST", message: "此重置令牌已被使用" });
           }
           
           // 对新密码进行哈希
@@ -599,7 +631,7 @@ ClassClicker 团队
             passwordHash
           );
           if (!resetCompleted) {
-            throw new Error("重置令牌已被使用或已过期");
+            throw new TRPCError({ code: "BAD_REQUEST", message: "重置令牌已被使用或已过期" });
           }
           
           return {
@@ -607,7 +639,7 @@ ClassClicker 团队
             message: "密码重置成功，请使用新密码登录",
           };
         } catch (error) {
-          console.error("[Auth] Reset password error:", error);
+          logUnexpectedTrpcError("[Auth] Reset password error:", error, ["BAD_REQUEST"]);
           throw error;
         }
       }),
@@ -681,14 +713,14 @@ ClassClicker 团队
             input.code.toUpperCase(),
             passwordHash
           );
-          if (!resetCompleted) throw new Error("验证码无效或已过期");
+          if (!resetCompleted) throw new TRPCError({ code: "BAD_REQUEST", message: "验证码无效或已过期" });
           
           return {
             success: true,
             message: "密码重置成功，请使用新密码登录",
           };
         } catch (error) {
-          console.error("[Auth] Verify password reset code error:", error);
+          logUnexpectedTrpcError("[Auth] Verify password reset code error:", error, ["BAD_REQUEST", "TOO_MANY_REQUESTS"]);
           throw error;
         }
       }),
@@ -733,13 +765,13 @@ ClassClicker 团队
       .mutation(async ({ input, ctx }) => {
         try {
           if (!ctx.user) {
-            throw new Error("未登录");
+            throw new TRPCError({ code: "UNAUTHORIZED", message: "未登录" });
           }
           
           // 检查微信ID是否已被其他用户使用
           const existingUser = await db.getUserByWeChatId(input.wechatId);
           if (existingUser && existingUser.id !== ctx.user.id) {
-            throw new Error("此微信账号已被绑定");
+            throw new TRPCError({ code: "CONFLICT", message: "此微信账号已被绑定" });
           }
           
           // 更新用户的微信ID
@@ -753,7 +785,10 @@ ClassClicker 团队
             user: sanitizeUser(updatedUser),
           };
         } catch (error) {
-          console.error("[Auth] Bind WeChat error:", error);
+          if (db.isDuplicateDatabaseEntry(error)) {
+            throw new TRPCError({ code: "CONFLICT", message: "此微信账号已被绑定" });
+          }
+          logUnexpectedTrpcError("[Auth] Bind WeChat error:", error, ["CONFLICT", "UNAUTHORIZED"]);
           throw error;
         }
       }),
@@ -762,7 +797,7 @@ ClassClicker 团队
       .mutation(async ({ ctx }) => {
         try {
           if (!ctx.user) {
-            throw new Error("未登录");
+            throw new TRPCError({ code: "UNAUTHORIZED", message: "未登录" });
           }
           
           // 解绑微信ID
@@ -776,7 +811,7 @@ ClassClicker 团队
             user: sanitizeUser(updatedUser),
           };
         } catch (error) {
-          console.error("[Auth] Verify email error:", error);
+          logUnexpectedTrpcError("[Auth] Unbind WeChat error:", error, ["UNAUTHORIZED"]);
           throw error;
         }
       }),
@@ -788,13 +823,13 @@ ClassClicker 团队
       .mutation(async ({ input, ctx }) => {
         try {
           if (!ctx.user) {
-            throw new Error("未登录");
+            throw new TRPCError({ code: "UNAUTHORIZED", message: "未登录" });
           }
           
           // 检查QQ ID是否已被其他用户使用
           const existingUser = await db.getUserByQQId(input.qqId);
           if (existingUser && existingUser.id !== ctx.user.id) {
-            throw new Error("此QQ账号已被绑定");
+            throw new TRPCError({ code: "CONFLICT", message: "此QQ账号已被绑定" });
           }
           
           // 更新用户的QQ ID
@@ -808,7 +843,10 @@ ClassClicker 团队
             user: sanitizeUser(updatedUser),
           };
         } catch (error) {
-          console.error("[Auth] Bind QQ error:", error);
+          if (db.isDuplicateDatabaseEntry(error)) {
+            throw new TRPCError({ code: "CONFLICT", message: "此QQ账号已被绑定" });
+          }
+          logUnexpectedTrpcError("[Auth] Bind QQ error:", error, ["CONFLICT", "UNAUTHORIZED"]);
           throw error;
         }
       }),
@@ -817,7 +855,7 @@ ClassClicker 团队
       .mutation(async ({ ctx }) => {
         try {
           if (!ctx.user) {
-            throw new Error("未登录");
+            throw new TRPCError({ code: "UNAUTHORIZED", message: "未登录" });
           }
           
           // 解绑QQ ID
@@ -831,7 +869,7 @@ ClassClicker 团队
             user: sanitizeUser(updatedUser),
           };
         } catch (error) {
-          console.error("[Auth] Unbind QQ error:", error);
+          logUnexpectedTrpcError("[Auth] Unbind QQ error:", error, ["UNAUTHORIZED"]);
           throw error;
         }
       }),
@@ -843,13 +881,13 @@ ClassClicker 团队
       .mutation(async ({ input, ctx }) => {
         try {
           if (!ctx.user) {
-            throw new Error("未登录");
+            throw new TRPCError({ code: "UNAUTHORIZED", message: "未登录" });
           }
           
           // 检查抖音ID是否已被其他用户使用
           const existingUser = await db.getUserByDouyinId(input.douyinId);
           if (existingUser && existingUser.id !== ctx.user.id) {
-            throw new Error("此抖音账号已被绑定");
+            throw new TRPCError({ code: "CONFLICT", message: "此抖音账号已被绑定" });
           }
           
           // 更新用户的抖音ID
@@ -863,7 +901,10 @@ ClassClicker 团队
             user: sanitizeUser(updatedUser),
           };
         } catch (error) {
-          console.error("[Auth] Bind Douyin error:", error);
+          if (db.isDuplicateDatabaseEntry(error)) {
+            throw new TRPCError({ code: "CONFLICT", message: "此抖音账号已被绑定" });
+          }
+          logUnexpectedTrpcError("[Auth] Bind Douyin error:", error, ["CONFLICT", "UNAUTHORIZED"]);
           throw error;
         }
       }),
@@ -872,7 +913,7 @@ ClassClicker 团队
       .mutation(async ({ ctx }) => {
         try {
           if (!ctx.user) {
-            throw new Error("未登录");
+            throw new TRPCError({ code: "UNAUTHORIZED", message: "未登录" });
           }
           
           // 解绑抖音ID
@@ -886,7 +927,7 @@ ClassClicker 团队
             user: sanitizeUser(updatedUser),
           };
         } catch (error) {
-          console.error("[Auth] Unbind Douyin error:", error);
+          logUnexpectedTrpcError("[Auth] Unbind Douyin error:", error, ["UNAUTHORIZED"]);
           throw error;
         }
       }),
@@ -955,20 +996,23 @@ ClassClicker 团队
         name: z.string().min(1).max(255),
         cardNumber: z.number().min(1).max(40).optional(),
       }))
-      .mutation(async ({ ctx, input }) => {
-        await requireOwnedClass(ctx.user.id, input.classId);
-        const existing = await db.getStudentsByClass(input.classId);
-        const cardNumber = input.cardNumber || await db.getNextAvailableCardNumber(input.classId);
-        if (existing.some(student => student.cardNumber === cardNumber)) {
-          throw new TRPCError({ code: "CONFLICT", message: "该班级已使用此答题卡号" });
+      .mutation(async ({ ctx, input }) => withStudentCardNumberErrors(
+        "[Students] Create student error:",
+        async () => {
+          await requireOwnedClass(ctx.user.id, input.classId);
+          const existing = await db.getStudentsByClass(input.classId);
+          const cardNumber = input.cardNumber || await db.getNextAvailableCardNumber(input.classId);
+          if (existing.some(student => student.cardNumber === cardNumber)) {
+            throw new TRPCError({ code: "CONFLICT", message: "该班级已使用此答题卡号" });
+          }
+          const studentId = await db.createStudent({
+            classId: input.classId,
+            name: input.name,
+            cardNumber,
+          });
+          return { studentId, cardNumber };
         }
-        const studentId = await db.createStudent({
-          classId: input.classId,
-          name: input.name,
-          cardNumber,
-        });
-        return { studentId, cardNumber };
-      }),
+      )),
     
     update: protectedProcedure
       .input(z.object({
@@ -976,18 +1020,21 @@ ClassClicker 团队
         name: z.string().min(1).max(255).optional(),
         cardNumber: z.number().min(1).max(40).optional(),
       }))
-      .mutation(async ({ ctx, input }) => {
-        const student = await requireOwnedStudent(ctx.user.id, input.studentId);
-        if (input.cardNumber !== undefined) {
-          const existing = await db.getStudentsByClass(student.classId);
-          if (existing.some(item => item.id !== student.id && item.cardNumber === input.cardNumber)) {
-            throw new TRPCError({ code: "CONFLICT", message: "该班级已使用此答题卡号" });
+      .mutation(async ({ ctx, input }) => withStudentCardNumberErrors(
+        "[Students] Update student error:",
+        async () => {
+          const student = await requireOwnedStudent(ctx.user.id, input.studentId);
+          if (input.cardNumber !== undefined) {
+            const existing = await db.getStudentsByClass(student.classId);
+            if (existing.some(item => item.id !== student.id && item.cardNumber === input.cardNumber)) {
+              throw new TRPCError({ code: "CONFLICT", message: "该班级已使用此答题卡号" });
+            }
           }
+          const { studentId, ...data } = input;
+          await db.updateStudent(studentId, data);
+          return { success: true };
         }
-        const { studentId, ...data } = input;
-        await db.updateStudent(studentId, data);
-        return { success: true };
-      }),
+      )),
     
     delete: protectedProcedure
       .input(z.object({ studentId: z.number().int().positive() }))
@@ -999,10 +1046,13 @@ ClassClicker 团队
     
     getNextCardNumber: protectedProcedure
       .input(z.object({ classId: z.number() }))
-      .query(async ({ ctx, input }) => {
-        await requireOwnedClass(ctx.user.id, input.classId);
-        return await db.getNextAvailableCardNumber(input.classId);
-      }),
+      .query(async ({ ctx, input }) => withStudentCardNumberErrors(
+        "[Students] Get next card number error:",
+        async () => {
+          await requireOwnedClass(ctx.user.id, input.classId);
+          return await db.getNextAvailableCardNumber(input.classId);
+        }
+      )),
     
     bulkImport: protectedProcedure
       .input(z.object({
@@ -1012,15 +1062,18 @@ ClassClicker 团队
           cardNumber: z.number().min(1).max(40).optional(),
         })).min(1).max(40),
       }))
-      .mutation(async ({ ctx, input }) => {
-        await requireOwnedClass(ctx.user.id, input.classId);
-        const results = await db.bulkImportStudents(input.classId, input.students);
-        return {
-          success: true,
-          imported: results.length,
-          students: results,
-        };
-      }),
+      .mutation(async ({ ctx, input }) => withStudentCardNumberErrors(
+        "[Students] Bulk import students error:",
+        async () => {
+          await requireOwnedClass(ctx.user.id, input.classId);
+          const results = await db.bulkImportStudents(input.classId, input.students);
+          return {
+            success: true,
+            imported: results.length,
+            students: results,
+          };
+        }
+      )),
   }),
 
   // ============ Question Sets Router ============
@@ -1615,14 +1668,14 @@ ClassClicker 团队
         try {
           const card = await db.getAnswerCardMetadata(input.cardNumber);
           if (!card) {
-            throw new Error(`答题卡 ${input.cardNumber} 不存在`);
+            throw new TRPCError({ code: "NOT_FOUND", message: `答题卡 ${input.cardNumber} 不存在` });
           }
           return {
             success: true,
             card,
           };
         } catch (error) {
-          console.error('[AnswerCards] Error fetching card:', error);
+          logUnexpectedTrpcError('[AnswerCards] Error fetching card:', error, ["NOT_FOUND"]);
           throw error;
         }
       }),
@@ -1651,7 +1704,7 @@ ClassClicker 团队
         try {
           const card = await db.getAnswerCardMetadata(input.cardNumber);
           if (!card) {
-            throw new Error(`答题卡 ${input.cardNumber} 不存在`);
+            throw new TRPCError({ code: "NOT_FOUND", message: `答题卡 ${input.cardNumber} 不存在` });
           }
           // 返回本地存储文件的稳定同源 URL
           const { url } = await storageGet(card.storageKey);
@@ -1661,7 +1714,7 @@ ClassClicker 团队
             fileName: `answer-card-${input.cardNumber}.pdf`,
           };
         } catch (error) {
-          console.error('[AnswerCards] Error generating download URL:', error);
+          logUnexpectedTrpcError('[AnswerCards] Error generating download URL:', error, ["NOT_FOUND"]);
           throw error;
         }
       }),
@@ -1690,7 +1743,7 @@ ClassClicker 团队
             totalCards: cards.length,
           };
         } catch (error) {
-          console.error('[AnswerCards] Error generating download all:', error);
+          logUnexpectedTrpcError('[AnswerCards] Error generating download all:', error, ["NOT_FOUND", "PRECONDITION_FAILED"]);
           throw error;
         }
       }),

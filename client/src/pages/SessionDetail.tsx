@@ -20,6 +20,7 @@ import {
 } from "chart.js";
 import { Bar, Pie } from "react-chartjs-2";
 import { useState, useMemo } from "react";
+import { toast } from "sonner";
 
 ChartJS.register(
   CategoryScale,
@@ -48,7 +49,7 @@ export function SessionDetail({ sessionId, onBack, onSelectQuestion, onSelectStu
   const { data: session } = trpc.sessions.get.useQuery({ sessionId: parseInt(sessionId) });
 
   // 获取会话队列
-  const { data: sessionQueue } = trpc.sessions.getQueueWithQuestions.useQuery({ sessionId: parseInt(sessionId) });
+  const { data: sessionQueue, error: sessionQueueError } = trpc.sessions.getQueueWithQuestions.useQuery({ sessionId: parseInt(sessionId) });
 
   // 获取当前选中题目的统计数据
   const { data: sessionStats } = trpc.answers.getStatistics.useQuery(
@@ -83,24 +84,32 @@ export function SessionDetail({ sessionId, onBack, onSelectQuestion, onSelectStu
 
   // 处理数据导出为Excel
   // 获取所有题目的统计数据
-  const { data: allQuestionsStats } = trpc.answers.getAllSessionQuestionsStatistics.useQuery({
+  const { data: allQuestionsStats, error: allQuestionsStatsError } = trpc.answers.getAllSessionQuestionsStatistics.useQuery({
     sessionId: parseInt(sessionId),
   });
 
-  const { data: questionsWithStudents } = trpc.answers.getSessionQuestionsWithStudentAnswers.useQuery({
+  const { data: questionsWithStudents, error: questionsWithStudentsError } = trpc.answers.getSessionQuestionsWithStudentAnswers.useQuery({
     sessionId: parseInt(sessionId),
   });
 
-  const { data: overallStats } = trpc.answers.getSessionOverallStatistics.useQuery({
+  const { data: overallStats, error: overallStatsError } = trpc.answers.getSessionOverallStatistics.useQuery({
     sessionId: parseInt(sessionId),
   });
 
-  const { data: studentScoreCards } = trpc.answers.getSessionStudentScoreCards.useQuery({
+  const { data: studentScoreCards, error: studentScoreCardsError } = trpc.answers.getSessionStudentScoreCards.useQuery({
     sessionId: parseInt(sessionId),
   });
 
   const handleExportExcel = async () => {
-    if (!sessionQueue || !allQuestionsStats || !overallStats || !studentScoreCards) return;
+    if (sessionQueueError || allQuestionsStatsError || questionsWithStudentsError || overallStatsError || studentScoreCardsError) {
+      toast.error("报告数据查询失败，请稍后重试");
+      return;
+    }
+
+    if (!sessionQueue || !allQuestionsStats || !overallStats || !studentScoreCards) {
+      toast.error("报告数据正在加载，请稍后重试");
+      return;
+    }
 
     try {
 
@@ -297,6 +306,7 @@ export function SessionDetail({ sessionId, onBack, onSelectQuestion, onSelectStu
 
     } catch (error) {
       console.error("导出Excel失败:", error);
+      toast.error("导出 Excel 失败: " + (error instanceof Error ? error.message : "请稍后重试"));
     }
   };
 

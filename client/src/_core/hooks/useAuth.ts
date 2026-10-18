@@ -23,21 +23,26 @@ export function useAuth(options?: UseAuthOptions) {
     },
   });
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (): Promise<boolean> => {
+    let logoutFailed = false;
+
     try {
       await logoutMutation.mutateAsync();
     } catch (error: unknown) {
-      if (
+      const sessionWasAlreadyInvalid =
         error instanceof TRPCClientError &&
-        error.data?.code === "UNAUTHORIZED"
-      ) {
-        return;
-      }
-      throw error;
+        error.data?.code === "UNAUTHORIZED";
+      logoutFailed = !sessionWasAlreadyInvalid;
     } finally {
       utils.auth.me.setData(undefined, null);
-      await utils.auth.me.invalidate();
+      try {
+        await utils.auth.me.invalidate();
+      } catch {
+        logoutFailed = true;
+      }
     }
+
+    return !logoutFailed;
   }, [logoutMutation, utils]);
 
   const state = useMemo(() => {

@@ -82,12 +82,29 @@ describe("Answer Cards Router", { timeout: 30000 }, () => {
     expect(storage.storageGet).toHaveBeenCalledWith(card.storageKey);
   });
 
+  it("returns structured NOT_FOUND errors when an individual answer card is missing", async () => {
+    vi.spyOn(db, "getAnswerCardMetadata").mockResolvedValue(undefined);
+    const caller = appRouter.createCaller(createContext());
+
+    await expect(caller.answerCards.get({ cardNumber: 80 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "答题卡 80 不存在",
+    });
+    await expect(caller.answerCards.downloadSingle({ cardNumber: 80 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "答题卡 80 不存在",
+    });
+  });
+
   it("rejects downloading all cards when no pre-generated cards exist", async () => {
     vi.spyOn(db, "getAllAnswerCardsMetadata").mockResolvedValue([]);
 
     const caller = appRouter.createCaller(createContext());
 
-    await expect(caller.answerCards.downloadAll()).rejects.toThrow("没有可用的答题卡");
+    await expect(caller.answerCards.downloadAll()).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "没有可用的答题卡",
+    });
   });
 
   it("does not build the all-cards ZIP from an anonymous public download", async () => {

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Maximize2, Minimize2, Eye, EyeOff } from 'lucide-react';
+import { toast } from 'sonner';
 
 /**
  * Now Playing 投影界面
@@ -29,7 +30,11 @@ export default function NowPlaying() {
     { sessionId },
     { enabled: !!sessionId }
   );
-  const setActiveQuestionMutation = trpc.sessions.setActiveQuestion.useMutation();
+  const setActiveQuestionMutation = trpc.sessions.setActiveQuestion.useMutation({
+    onError: (error) => {
+      toast.error('切换题目失败: ' + error.message);
+    },
+  });
 
   // 获取当前题目的答题统计
   const currentQueueItem = queue?.[currentQuestionIndex];
@@ -74,28 +79,32 @@ export default function NowPlaying() {
     }
   };
 
+  // 服务端切换成功后再更新本地题目，避免界面与投影状态不一致。
+  const changeQuestion = (nextIndex: number) => {
+    const nextQuestion = queue?.[nextIndex];
+    if (!nextQuestion || nextIndex === currentQuestionIndex) return;
+
+    setActiveQuestionMutation.mutate(
+      { sessionId, questionId: nextQuestion.questionId },
+      {
+        onSuccess: () => {
+          setCurrentQuestionIndex(nextIndex);
+          setShowAnswer(false);
+        },
+      }
+    );
+  };
+
   // 处理题目切换
   const handlePreviousQuestion = () => {
     if (currentQuestionIndex > 0) {
-      const previousIndex = currentQuestionIndex - 1;
-      setCurrentQuestionIndex(previousIndex);
-      setShowAnswer(false);
-      const previousQuestion = queue?.[previousIndex];
-      if (previousQuestion) {
-        setActiveQuestionMutation.mutate({ sessionId, questionId: previousQuestion.questionId });
-      }
+      changeQuestion(currentQuestionIndex - 1);
     }
   };
 
   const handleNextQuestion = () => {
     if (queue && currentQuestionIndex < queue.length - 1) {
-      const nextIndex = currentQuestionIndex + 1;
-      setCurrentQuestionIndex(nextIndex);
-      setShowAnswer(false);
-      const nextQuestion = queue[nextIndex];
-      if (nextQuestion) {
-        setActiveQuestionMutation.mutate({ sessionId, questionId: nextQuestion.questionId });
-      }
+      changeQuestion(currentQuestionIndex + 1);
     }
   };
 
@@ -301,7 +310,7 @@ export default function NowPlaying() {
       <div className="flex items-center justify-between p-4 bg-slate-800 border-t border-slate-700">
         <Button
           onClick={handlePreviousQuestion}
-          disabled={currentQuestionIndex === 0}
+          disabled={currentQuestionIndex === 0 || setActiveQuestionMutation.isPending}
           className="px-6 py-2"
         >
           ← 上一题
@@ -311,10 +320,8 @@ export default function NowPlaying() {
           {queue.map((_: any, index: number) => (
             <button
               key={index}
-              onClick={() => {
-                setCurrentQuestionIndex(index);
-                setShowAnswer(false);
-              }}
+              onClick={() => changeQuestion(index)}
+              disabled={setActiveQuestionMutation.isPending}
               className={`w-8 h-8 rounded text-sm font-semibold transition-all ${
                 index === currentQuestionIndex
                   ? 'bg-blue-500 text-white'
@@ -328,7 +335,7 @@ export default function NowPlaying() {
 
         <Button
           onClick={handleNextQuestion}
-          disabled={currentQuestionIndex === queue.length - 1}
+          disabled={currentQuestionIndex === queue.length - 1 || setActiveQuestionMutation.isPending}
           className="px-6 py-2"
         >
           下一题 →

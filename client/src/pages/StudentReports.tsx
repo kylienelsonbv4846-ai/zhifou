@@ -15,6 +15,7 @@ import {
   Legend,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
+import { toast } from "sonner";
 
 // 注册 Chart.js 组件
 ChartJS.register(
@@ -157,8 +158,6 @@ export default function StudentReports() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API response error:', errorText);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -172,6 +171,7 @@ export default function StudentReports() {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('导出Excel失败:', error);
+      toast.error("导出 Excel 失败: " + (error instanceof Error ? error.message : "请稍后重试"));
     }
   };
 
@@ -192,8 +192,6 @@ export default function StudentReports() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API response error:', errorText);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -208,6 +206,7 @@ export default function StudentReports() {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('导出班级数据失败:', error);
+      toast.error("导出班级数据失败: " + (error instanceof Error ? error.message : "请稍后重试"));
     }
   };
 

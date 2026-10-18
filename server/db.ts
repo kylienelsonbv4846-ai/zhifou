@@ -34,15 +34,35 @@ function getDatabaseErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
+export function isDuplicateDatabaseEntry(error: unknown): boolean {
+  return getDatabaseErrorCode(error) === "ER_DUP_ENTRY";
+}
+
+export class StudentCardNumberCapacityError extends Error {
+  constructor() {
+    super("All card numbers (1-40) are already assigned");
+    this.name = "StudentCardNumberCapacityError";
+  }
+}
+
+export class StudentCardNumberConflictError extends Error {
+  constructor(cardNumber: number) {
+    super(`Card number ${cardNumber} is already in use`);
+    this.name = "StudentCardNumberConflictError";
+  }
+}
+
 let _db: ReturnType<typeof drizzle> | null = null;
 
-export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+export async function getDb(): Promise<ReturnType<typeof drizzle>> {
+  if (!_db) {
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    if (!databaseUrl) throw new Error("DATABASE_URL must be configured");
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _db = drizzle(databaseUrl);
     } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
+      console.error("[Database] Failed to initialize:", error);
+      throw error;
     }
   }
   return _db;
@@ -78,10 +98,7 @@ export async function checkDatabaseReadiness() {
 
 export async function getUserById(userId: number) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
+  if (!db) throw new Error("Database not available");
 
   const result = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   return result.length > 0 ? result[0] : undefined;
@@ -94,10 +111,7 @@ export async function getUserById(userId: number) {
  */
 export async function getUserByEmail(email: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
+  if (!db) throw new Error("Database not available");
 
   const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
   return result.length > 0 ? result[0] : undefined;
@@ -110,17 +124,14 @@ export async function getUserByEmail(email: string) {
  */
 export async function isEmailTaken(email: string): Promise<boolean> {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot check email: database not available");
-    return false;
-  }
+  if (!db) throw new Error("Database not available");
 
   try {
     const result = await db.select().from(localAccounts).where(eq(localAccounts.email, email)).limit(1);
     return result.length > 0;
   } catch (error) {
     console.error("[Database] Failed to check email:", error);
-    return false;
+    throw error;
   }
 }
 
@@ -131,10 +142,7 @@ export async function isEmailTaken(email: string): Promise<boolean> {
  */
 export async function getUnverifiedUserByEmail(email: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get unverified user: database not available");
-    return undefined;
-  }
+  if (!db) throw new Error("Database not available");
 
   try {
     const result = await db.select().from(users)
@@ -146,7 +154,7 @@ export async function getUnverifiedUserByEmail(email: string) {
     return result.length > 0 ? result[0] : undefined;
   } catch (error) {
     console.error("[Database] Failed to get unverified user:", error);
-    return undefined;
+    throw error;
   }
 }
 
@@ -359,7 +367,7 @@ export async function getNextAvailableCardNumber(classId: number): Promise<numbe
     }
   }
   
-  throw new Error("All card numbers (1-40) are already assigned");
+  throw new StudentCardNumberCapacityError();
 }
 
 export async function bulkImportStudents(
@@ -390,12 +398,12 @@ export async function bulkImportStudents(
     }
     
     if (!cardNumber) {
-      throw new Error("All card numbers (1-40) are already assigned");
+      throw new StudentCardNumberCapacityError();
     }
     
     // 检查是否有重复的卡号
     if (usedNumbers.has(cardNumber)) {
-      throw new Error(`Card number ${cardNumber} is already in use`);
+      throw new StudentCardNumberConflictError(cardNumber);
     }
     
     usedNumbers.add(cardNumber);
@@ -1430,7 +1438,7 @@ export async function claimEmailSendingRateLimit(
       const code = getDatabaseErrorCode(error);
       if (code === "ER_DUP_ENTRY") return false;
       if (code !== "ER_LOCK_DEADLOCK" && code !== "ER_LOCK_WAIT_TIMEOUT") throw error;
-      if (attempt === maxRetries) return false;
+      if (attempt === maxRetries) throw error;
       await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 10));
     }
   }
@@ -1599,11 +1607,15 @@ export async function completePasswordResetWithToken(
 
     const userResult = await tx
       .update(users)
-      .set({ passwordHash, updatedAt: now })
+      .set({
+        passwordHash,
+        sessionVersion: sql`${users.sessionVersion} + 1`,
+        updatedAt: now,
+      })
       .where(eq(users.id, userId));
     const userHeader = (Array.isArray(userResult) ? userResult[0] : undefined) as { affectedRows?: number } | undefined;
     if (Number(userHeader?.affectedRows ?? 0) !== 1) {
-      throw new Error("Password reset account no longer exists");
+      return false;
     }
 
     await tx
@@ -2169,7 +2181,11 @@ export async function completePasswordResetWithCode(
 
     const updated = await tx
       .update(users)
-      .set({ passwordHash, updatedAt: now })
+      .set({
+        passwordHash,
+        sessionVersion: sql`${users.sessionVersion} + 1`,
+        updatedAt: now,
+      })
       .where(and(
         eq(users.id, user.id),
         eq(users.loginMethod, "local"),
@@ -2177,7 +2193,7 @@ export async function completePasswordResetWithCode(
       ));
     const updatedHeader = (Array.isArray(updated) ? updated[0] : undefined) as { affectedRows?: number } | undefined;
     if (Number(updatedHeader?.affectedRows ?? 0) !== 1) {
-      throw new Error("Password reset account changed during the operation");
+      return false;
     }
 
     await tx
@@ -2250,7 +2266,9 @@ export async function updateUser(userId: number, updates: Record<string, any>) {
 
     return result[0];
   } catch (error) {
-    console.error("[Database] Update user error:", error);
+    if (!isDuplicateDatabaseEntry(error)) {
+      console.error("[Database] Update user error:", error);
+    }
     throw error;
   }
 }
@@ -2264,8 +2282,7 @@ export async function updateUser(userId: number, updates: Record<string, any>) {
 export async function getUserByWeChatId(wechatId: string) {
   const db = await getDb();
   if (!db) {
-    console.warn("[Database] Cannot get user by WeChat ID: database not available");
-    return undefined;
+    throw new Error("Database not available");
   }
 
   try {
@@ -2273,15 +2290,14 @@ export async function getUserByWeChatId(wechatId: string) {
     return result.length > 0 ? result[0] : undefined;
   } catch (error) {
     console.error("[Database] Failed to get user by WeChat ID:", error);
-    return undefined;
+    throw error;
   }
 }
 
 export async function getUserByQQId(qqId: string) {
   const db = await getDb();
   if (!db) {
-    console.warn("[Database] Cannot get user by QQ ID: database not available");
-    return undefined;
+    throw new Error("Database not available");
   }
 
   try {
@@ -2289,15 +2305,14 @@ export async function getUserByQQId(qqId: string) {
     return result.length > 0 ? result[0] : undefined;
   } catch (error) {
     console.error("[Database] Failed to get user by QQ ID:", error);
-    return undefined;
+    throw error;
   }
 }
 
 export async function getUserByDouyinId(douyinId: string) {
   const db = await getDb();
   if (!db) {
-    console.warn("[Database] Cannot get user by Douyin ID: database not available");
-    return undefined;
+    throw new Error("Database not available");
   }
 
   try {
@@ -2305,7 +2320,7 @@ export async function getUserByDouyinId(douyinId: string) {
     return result.length > 0 ? result[0] : undefined;
   } catch (error) {
     console.error("[Database] Failed to get user by Douyin ID:", error);
-    return undefined;
+    throw error;
   }
 }
 
@@ -2320,8 +2335,7 @@ export async function upsertAnswerCardMetadata(
 ): Promise<void> {
   const db = await getDb();
   if (!db) {
-    console.warn("[Database] Cannot upsert answer card metadata: database not available");
-    return;
+    throw new Error("Database not available");
   }
 
   try {
@@ -2347,8 +2361,7 @@ export async function upsertAnswerCardMetadata(
 export async function getAnswerCardMetadata(cardNumber: number) {
   const db = await getDb();
   if (!db) {
-    console.warn("[Database] Cannot get answer card metadata: database not available");
-    return null;
+    throw new Error("Database not available");
   }
 
   try {
@@ -2361,15 +2374,14 @@ export async function getAnswerCardMetadata(cardNumber: number) {
     return result[0] || null;
   } catch (error) {
     console.error("[Database] Failed to get answer card metadata:", error);
-    return null;
+    throw error;
   }
 }
 
 export async function getAllAnswerCardsMetadata() {
   const db = await getDb();
   if (!db) {
-    console.warn("[Database] Cannot get all answer cards metadata: database not available");
-    return [];
+    throw new Error("Database not available");
   }
 
   try {
@@ -2381,15 +2393,14 @@ export async function getAllAnswerCardsMetadata() {
     return result;
   } catch (error) {
     console.error("[Database] Failed to get all answer cards metadata:", error);
-    return [];
+    throw error;
   }
 }
 
 export async function isAnswerCardsInitialized(): Promise<boolean> {
   const db = await getDb();
   if (!db) {
-    console.warn("[Database] Cannot check answer cards initialization: database not available");
-    return false;
+    throw new Error("Database not available");
   }
 
   try {
@@ -2400,7 +2411,7 @@ export async function isAnswerCardsInitialized(): Promise<boolean> {
     return (result[0]?.count || 0) === 80;
   } catch (error) {
     console.error("[Database] Failed to check answer cards initialization:", error);
-    return false;
+    throw error;
   }
 }
 

@@ -97,20 +97,22 @@ export default function QuestionSets() {
     setDragOverTarget(null);
   };
 
-  const handleDrop = async (e: React.DragEvent, targetFolderId: number | null) => {
+  const handleDrop = (e: React.DragEvent, targetFolderId: number | null) => {
     e.preventDefault();
     setDragOverTarget(null);
 
     if (!draggedItem) return;
 
     if (draggedItem.type === 'set') {
-      await moveMutation.mutateAsync({
+      moveMutation.mutate({
         setId: draggedItem.id,
         folderId: targetFolderId,
+      }, {
+        onSuccess: () => {
+          setDraggedItem(null);
+        },
       });
     }
-
-    setDraggedItem(null);
   };
 
   const createMutation = trpc.questionSets.create.useMutation({

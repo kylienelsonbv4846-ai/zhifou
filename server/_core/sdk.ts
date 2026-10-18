@@ -21,16 +21,20 @@ function getSessionSecret(): Uint8Array {
 class SessionService {
   async createLocalSessionToken(
     userId: number,
+    sessionVersion = 0,
     options: { expiresInSeconds?: number } = {}
   ): Promise<string> {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new Error("A valid local user ID is required to create a session");
     }
+    if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0) {
+      throw new Error("A valid local session version is required to create a session");
+    }
 
     const now = Math.floor(Date.now() / 1000);
     const expiresInSeconds = options.expiresInSeconds ?? SESSION_TTL_SECONDS;
 
-    return new SignJWT({ token_use: "local_session" })
+    return new SignJWT({ token_use: "local_session", sessionVersion })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setSubject(String(userId))
       .setIssuedAt(now)
@@ -40,26 +44,30 @@ class SessionService {
 
   async verifyLocalSession(
     token: string | undefined | null
-  ): Promise<{ userId: number } | null> {
+  ): Promise<{ userId: number; sessionVersion: number } | null> {
     if (!token) return null;
+    const secret = getSessionSecret();
 
     try {
-      const { payload } = await jwtVerify(token, getSessionSecret(), {
+      const { payload } = await jwtVerify(token, secret, {
         algorithms: ["HS256"],
       });
       const userId = Number(payload.sub);
+      const sessionVersion = payload.sessionVersion;
 
       if (
         payload.token_use !== "local_session" ||
         !Number.isSafeInteger(userId) ||
-        userId <= 0
+        userId <= 0 ||
+        typeof sessionVersion !== "number" ||
+        !Number.isSafeInteger(sessionVersion) ||
+        sessionVersion < 0
       ) {
         return null;
       }
 
-      return { userId };
-    } catch (error) {
-      console.warn("[Auth] Local session verification failed", String(error));
+      return { userId, sessionVersion };
+    } catch {
       return null;
     }
   }
@@ -73,7 +81,12 @@ class SessionService {
     }
 
     const user = await db.getUserById(session.userId);
-    if (!user || user.loginMethod !== "local" || !user.isEmailVerified) {
+    if (
+      !user ||
+      user.loginMethod !== "local" ||
+      !user.isEmailVerified ||
+      user.sessionVersion !== session.sessionVersion
+    ) {
       throw ForbiddenError("Local account session is no longer valid");
     }
 
@@ -112,8 +125,9 @@ export async function verifyStudentAccessToken(
   studentId: number
 ): Promise<boolean> {
   if (!token) return false;
+  const secret = getSessionSecret();
   try {
-    const { payload } = await jwtVerify(token, getSessionSecret(), {
+    const { payload } = await jwtVerify(token, secret, {
       algorithms: ["HS256"],
     });
     return (

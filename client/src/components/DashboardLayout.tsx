@@ -22,6 +22,7 @@ import {
 import { useIsMobile } from "@/hooks/useMobile";
 import { LayoutDashboard, LogOut, PanelLeft, Users, BookOpen, PlayCircle, BarChart3 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
@@ -118,6 +119,18 @@ function DashboardLayoutContent({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const activeMenuItem = menuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
+
+  const handleLogout = () => {
+    logout()
+      .then(didLogout => {
+        if (!didLogout) {
+          toast.error("登出失败，已清除本地登录状态");
+        }
+      })
+      .catch(() => {
+        toast.error("登出失败，已清除本地登录状态");
+      });
+  };
 
   useEffect(() => {
     if (isCollapsed) {
@@ -226,7 +239,7 @@ function DashboardLayoutContent({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuItem
-                  onClick={logout}
+                  onClick={handleLogout}
                   className="cursor-pointer text-destructive focus:text-destructive"
                 >
                   <LogOut className="mr-2 h-4 w-4" />

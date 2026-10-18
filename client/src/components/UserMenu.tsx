@@ -10,6 +10,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { User, Settings, LogOut } from "lucide-react";
+import { toast } from "sonner";
 
 export function UserMenu() {
   const [, setLocation] = useLocation();
@@ -27,7 +28,15 @@ export function UserMenu() {
 
   const handleLogout = () => {
     setIsOpen(false);
-    logout();
+    logout()
+      .then(didLogout => {
+        if (!didLogout) {
+          toast.error("登出失败，已清除本地登录状态");
+        }
+      })
+      .catch(() => {
+        toast.error("登出失败，已清除本地登录状态");
+      });
   };
 
   const userInitial = user.name?.charAt(0).toUpperCase() || "U";

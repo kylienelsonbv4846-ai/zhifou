@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { AlertTriangle, RotateCcw, Home, RefreshCw } from "lucide-react";
-import { Component, ReactNode, ErrorInfo } from "react";
+import React, { Component, ReactNode, ErrorInfo } from "react";
 
 interface Props {
   children: ReactNode;
@@ -19,13 +19,15 @@ class ErrorBoundary extends Component<Props, State> {
     this.state = { hasError: false, error: null, errorInfo: null, errorCount: 0 };
   }
 
-  static getDerivedStateFromError(error: Error): Partial<State> {
+  static getDerivedStateFromError(): Partial<State> {
     return { hasError: true };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("Error caught by boundary:", error);
-    console.error("Error info:", errorInfo);
+    if (import.meta.env.DEV) {
+      console.error("Error caught by boundary:", error);
+      console.error("Error info:", errorInfo);
+    }
     
     this.logErrorToServer(error, errorInfo);
 
@@ -40,7 +42,9 @@ class ErrorBoundary extends Component<Props, State> {
     try {
       // 可以在这里发送错误到后端服务
     } catch (err) {
-      console.error("Failed to log error to server:", err);
+      if (import.meta.env.DEV) {
+        console.error("Failed to log error to server:", err);
+      }
     }
   };
 
@@ -60,8 +64,6 @@ class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <ErrorFallback
-          error={this.state.error}
-          errorInfo={this.state.errorInfo}
           onReset={this.handleReset}
           onRefresh={this.handleRefresh}
         />
@@ -73,13 +75,11 @@ class ErrorBoundary extends Component<Props, State> {
 }
 
 interface ErrorFallbackProps {
-  error: Error | null;
-  errorInfo: ErrorInfo | null;
   onReset: () => void;
   onRefresh: () => void;
 }
 
-function ErrorFallback({ error, errorInfo, onReset, onRefresh }: ErrorFallbackProps) {
+function ErrorFallback({ onReset, onRefresh }: ErrorFallbackProps) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-950 dark:to-orange-950 flex items-center justify-center p-4">
       <div className="w-full max-w-2xl space-y-4">
@@ -97,28 +97,6 @@ function ErrorFallback({ error, errorInfo, onReset, onRefresh }: ErrorFallbackPr
             <p className="text-sm text-muted-foreground">
               应用程序遇到了一个意外错误。请尝试以下操作：
             </p>
-
-            {/* Error Details */}
-            {error && (
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                <p className="text-xs font-semibold text-red-700 dark:text-red-300 mb-2">错误信息：</p>
-                <pre className="text-xs text-red-600 dark:text-red-400 overflow-auto max-h-32 font-mono whitespace-pre-wrap break-words">
-                  {error.message}
-                </pre>
-              </div>
-            )}
-
-            {/* Component Stack */}
-            {errorInfo && (
-              <details className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
-                <summary className="text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-slate-100">
-                  📋 技术详情（点击展开）
-                </summary>
-                <pre className="text-xs text-slate-600 dark:text-slate-400 overflow-auto max-h-40 mt-3 font-mono whitespace-pre-wrap break-words">
-                  {errorInfo.componentStack}
-                </pre>
-              </details>
-            )}
 
             {/* Tips */}
             <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">

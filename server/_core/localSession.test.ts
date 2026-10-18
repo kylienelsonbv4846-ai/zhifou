@@ -5,6 +5,8 @@ import { protectedProcedure, router } from "./trpc";
 import { appRouter } from "../routers";
 import { hashPassword } from "../auth";
 import { getSessionCookieOptions } from "./cookies";
+import { HttpError } from "@shared/_core/errors";
+import { createContext } from "./context";
 
 const dbMocks = vi.hoisted(() => ({
   getUserById: vi.fn(),
@@ -29,6 +31,7 @@ const localUser = {
   douyinId: null,
   role: "user" as const,
   isEmailVerified: true,
+  sessionVersion: 0,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   lastSignedIn: new Date("2026-01-01T00:00:00.000Z"),
@@ -46,6 +49,7 @@ describe("independent local JWT sessions", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -86,6 +90,27 @@ describe("independent local JWT sessions", () => {
     await expect(sdk.createLocalSessionToken(0)).rejects.toThrow(
       "A valid local user ID is required to create a session"
     );
+  });
+
+  it("treats only an invalid-session HTTP rejection as an anonymous context", async () => {
+    vi.spyOn(sdk, "authenticateRequest").mockRejectedValueOnce(
+      new HttpError(403, "Invalid session cookie")
+    );
+
+    await expect(createContext({
+      req: {} as Request,
+      res: {} as Response,
+    })).resolves.toMatchObject({ user: null });
+  });
+
+  it("propagates authentication database failures from the request context", async () => {
+    const failure = new Error("database connection failed");
+    vi.spyOn(sdk, "authenticateRequest").mockRejectedValueOnce(failure);
+
+    await expect(createContext({
+      req: {} as Request,
+      res: {} as Response,
+    })).rejects.toBe(failure);
   });
 
   it("creates a persistent first-party cookie from local email login", async () => {
@@ -164,5 +189,16 @@ describe("independent local JWT sessions", () => {
 
     const teacherSession = await sdk.createLocalSessionToken(202);
     await expect(verifyStudentAccessToken(teacherSession, 101, 202)).resolves.toBe(false);
+  });
+
+  it("surfaces missing JWT configuration instead of treating tokens as invalid", async () => {
+    vi.stubEnv("CLASSCLICKER_SESSION_SECRET", "");
+
+    await expect(sdk.verifyLocalSession("malformed-token")).rejects.toThrow(
+      "CLASSCLICKER_SESSION_SECRET must be configured"
+    );
+    await expect(verifyStudentAccessToken("malformed-token", 101, 202)).rejects.toThrow(
+      "CLASSCLICKER_SESSION_SECRET must be configured"
+    );
   });
 });

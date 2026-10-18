@@ -4,7 +4,18 @@ import { Download, ArrowLeft, Loader, AlertCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { shouldLogQueryErrorCode } from "@/lib/apiQueryErrorPolicy";
+import { TRPCClientError } from "@trpc/client";
 import { toast } from "sonner";
+
+function logUnexpectedDownloadError(error: unknown) {
+  const errorCode =
+    error instanceof TRPCClientError ? error.data?.code : undefined;
+
+  if (shouldLogQueryErrorCode(errorCode)) {
+    console.error("下载失败：", error);
+  }
+}
 
 export default function DownloadCards() {
   const [, setLocation] = useLocation();
@@ -75,7 +86,7 @@ export default function DownloadCards() {
         }
       }
     } catch (error) {
-      console.error("下载失败：", error);
+      logUnexpectedDownloadError(error);
       alert("下载失败，请重试");
     } finally {
       setDownloading(false);
@@ -100,7 +111,7 @@ export default function DownloadCards() {
         alert(`答题卡 ${cardNumber} 下载失败`);
       }
     } catch (error) {
-      console.error("下载失败：", error);
+      logUnexpectedDownloadError(error);
       alert("下载失败，请重试");
     } finally {
       setDownloading(false);

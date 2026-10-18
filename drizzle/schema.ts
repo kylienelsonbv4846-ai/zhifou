@@ -16,6 +16,8 @@ export const users = mysqlTable("users", {
   douyinId: varchar("douyinId", { length: 128 }).unique(), // Douyin ID for social login
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   isEmailVerified: boolean("isEmailVerified").default(false).notNull(),
+  // Incremented on password reset to revoke all previously issued local JWTs.
+  sessionVersion: int("sessionVersion").default(0).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),

@@ -4,6 +4,8 @@ import type { TrpcContext } from "./_core/context";
 import * as db from "./db";
 import { hashPassword, verifyPassword } from "./auth";
 import { appRouter } from "./routers";
+import { COOKIE_NAME } from "../shared/const";
+import { sdk } from "./_core/sdk";
 
 const createdPendingEmails = new Set<string>();
 const createdPasswordResetCodes = new Map<string, string>();
@@ -227,6 +229,113 @@ describe("OTP failed-attempt limits", () => {
     expect(await verifyPassword("SecurePass456!", updatedUser!.passwordHash!)).toBe(true);
     expect((await db.getPasswordResetCode(email, code))?.verified).toBe(true);
     expect((await db.getPasswordResetTokenByToken(legacyToken))?.usedAt).toBeTruthy();
+  });
+
+  it("rejects an old local JWT cookie after a legacy reset-token password reset", async () => {
+    const previousSecret = process.env.CLASSCLICKER_SESSION_SECRET;
+    process.env.CLASSCLICKER_SESSION_SECRET = "local-session-version-integration-test-secret";
+    try {
+      const email = uniqueEmail("legacy-reset-session-version");
+      const user = await db.createLocalAccount(
+        email,
+        await hashPassword("InitialPass123!"),
+        "Legacy Session Version Test"
+      );
+      createdTestUserIds.add(user.id);
+      await db.markEmailAsVerified(user.id);
+      const beforeReset = await db.getUserById(user.id);
+      if (!beforeReset) throw new Error("Expected local account before reset");
+
+      const oldCookie = await sdk.createLocalSessionToken(
+        beforeReset.id,
+        beforeReset.sessionVersion
+      );
+      const oldCookieRequest = {
+        headers: { cookie: `${COOKIE_NAME}=${oldCookie}` },
+      } as Parameters<typeof sdk.authenticateRequest>[0];
+      await expect(sdk.authenticateRequest(oldCookieRequest)).resolves.toMatchObject({
+        id: user.id,
+      });
+
+      const token = randomUUID();
+      createdLegacyResetTokens.set(token, user.id);
+      await db.createPasswordResetToken({
+        userId: user.id,
+        email,
+        token,
+        expiresAt: new Date(Date.now() + 10 * 60_000),
+      });
+
+      await expect(
+        createPublicCaller().auth.resetPassword({
+          token,
+          password: "NewPassword123!",
+          confirmPassword: "NewPassword123!",
+        })
+      ).resolves.toMatchObject({ success: true });
+
+      const afterReset = await db.getUserById(user.id);
+      expect(afterReset?.sessionVersion).toBe(beforeReset.sessionVersion + 1);
+      await expect(sdk.authenticateRequest(oldCookieRequest)).rejects.toThrow(
+        "Local account session is no longer valid"
+      );
+    } finally {
+      if (previousSecret === undefined) delete process.env.CLASSCLICKER_SESSION_SECRET;
+      else process.env.CLASSCLICKER_SESSION_SECRET = previousSecret;
+    }
+  });
+
+  it("rejects an old local JWT cookie after an OTP password reset", async () => {
+    const previousSecret = process.env.CLASSCLICKER_SESSION_SECRET;
+    process.env.CLASSCLICKER_SESSION_SECRET = "local-session-version-integration-test-secret";
+    try {
+      const email = uniqueEmail("otp-reset-session-version");
+      const user = await db.createLocalAccount(
+        email,
+        await hashPassword("InitialPass123!"),
+        "OTP Session Version Test"
+      );
+      createdTestUserIds.add(user.id);
+      await db.markEmailAsVerified(user.id);
+      const beforeReset = await db.getUserById(user.id);
+      if (!beforeReset) throw new Error("Expected local account before reset");
+
+      const oldCookie = await sdk.createLocalSessionToken(
+        beforeReset.id,
+        beforeReset.sessionVersion
+      );
+      const oldCookieRequest = {
+        headers: { cookie: `${COOKIE_NAME}=${oldCookie}` },
+      } as Parameters<typeof sdk.authenticateRequest>[0];
+      await expect(sdk.authenticateRequest(oldCookieRequest)).resolves.toMatchObject({
+        id: user.id,
+      });
+
+      const code = "826451";
+      createdPasswordResetCodes.set(email, code);
+      await db.createPasswordResetCode(
+        email,
+        code,
+        new Date(Date.now() + 10 * 60_000)
+      );
+
+      await expect(
+        createPublicCaller().auth.verifyPasswordResetCode({
+          email,
+          code,
+          newPassword: "NewPassword123!",
+        })
+      ).resolves.toMatchObject({ success: true });
+
+      const afterReset = await db.getUserById(user.id);
+      expect(afterReset?.sessionVersion).toBe(beforeReset.sessionVersion + 1);
+      await expect(sdk.authenticateRequest(oldCookieRequest)).rejects.toThrow(
+        "Local account session is no longer valid"
+      );
+    } finally {
+      if (previousSecret === undefined) delete process.env.CLASSCLICKER_SESSION_SECRET;
+      else process.env.CLASSCLICKER_SESSION_SECRET = previousSecret;
+    }
   });
 
   it("deletes only expired registration and password-reset codes", async () => {

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BookOpen, Clock, Play, Trash2 } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
+import { toast } from 'sonner';
 
 export default function Sessions() {
   const [, setLocation] = useLocation();
@@ -29,9 +30,16 @@ export default function Sessions() {
       void utils.sessions.invalidate();
       setSelectedSessionId(null);
     },
+    onError: (error) => {
+      toast.error('删除会话失败: ' + error.message);
+    },
   });
 
-  const startSessionMutation = trpc.sessions.start.useMutation();
+  const startSessionMutation = trpc.sessions.start.useMutation({
+    onError: (error) => {
+      toast.error('启动会话失败: ' + error.message);
+    },
+  });
 
   // 创建会话
   const createSessionMutation = trpc.sessions.create.useMutation({
@@ -46,6 +54,9 @@ export default function Sessions() {
           setLocation(`/sessions/${data.sessionId}/play`);
         },
       });
+    },
+    onError: (error) => {
+      toast.error('创建会话失败: ' + error.message);
     },
   });
 
